@@ -12,7 +12,7 @@ Esta versión recorta un solo stream de Sunshine. La pantalla superior de la 3DS
 2. En Citra Nightly deja el layout **Large Screen**, proporción 4, pantalla chica abajo a la derecha y sin intercambiar pantallas. Es el valor por defecto (`layout_option=2`).
 3. Maximiza Citra en un escritorio de 1920×1080, tal como se va a capturar. Las regiones de `moonlight.conf` incluyen la barra de título y la barra de tareas. Si mueves la ventana, o si Sunshine captura solo la ventana de Citra, el recorte deja de coincidir.
 4. En los controles de Citra, asigna el mando **Xbox 360** que crea Sunshine a los botones de la 3DS y al circle pad. Moonlight ya envía ese mando. La opción `citra_input` traduce el GamePad a teclado y está desactivada: actívala solo si Citra no tiene perfil de mando, porque si no las dos entradas se suman.
-5. En Sunshine, la aplicación que se abre debe ser el escritorio (por defecto se llama `Desktop`). En `moonlight.conf` pon `app = Desktop`. El cliente pide `Steam` si no cambias esa línea, y Sunshine no trae una aplicación con ese nombre.
+5. En Sunshine, la aplicación que se abre es el escritorio. `moonlight.conf` ya pide `app = Desktop`, que es el nombre por defecto de esa captura. Si en Sunshine la renombraste, usa ese mismo nombre.
 
 ### En la Wii U
 
@@ -29,6 +29,7 @@ dualscreen = true
 tv_region = 0,0.041739,0.833984,0.933913
 drc_region = 0.833984,0.711304,1,0.933913
 mouse_mode = absolute
+app = Desktop
 ```
 
 `tv_region` es la pantalla grande de la izquierda. `drc_region` es la táctil de abajo a la derecha. `mouse_mode = absolute` hace que el lápiz del GamePad pulse esa zona.
