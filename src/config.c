@@ -35,6 +35,7 @@ extern int disable_gamepad;
 extern int swap_buttons;
 extern mouse_modes mouse_mode;
 extern int autostream;
+extern int citra_input;
 
 extern ssize_t getline(char **buf, size_t *bufsiz, FILE *fp);
 
@@ -89,6 +90,7 @@ static struct option long_options[] = {
   {"dualscreen", no_argument, NULL, 'E'},
   {"tv_region", required_argument, NULL, 'F'},
   {"drc_region", required_argument, NULL, 'G'},
+  {"citra_input", no_argument, NULL, 'H'},
 #endif
   {"nomouseemulation", no_argument, NULL, '4'},
   {"pin", required_argument, NULL, '5'},
@@ -330,6 +332,9 @@ static void parse_argument(int c, char* value, PCONFIGURATION config) {
     break;
   case 'G':
     parse_screen_region(value, &drc_region);
+    break;
+  case 'H':
+    citra_input = 1;
     break;
 #endif
   case '4':

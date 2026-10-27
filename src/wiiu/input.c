@@ -15,6 +15,7 @@
 int disable_gamepad = 0;
 int swap_buttons = 0;
 mouse_modes mouse_mode = MOUSE_MODE_RELATIVE;
+int citra_input = 0;
 
 static char lastTouched = 0;
 static char touched = 0;
@@ -25,6 +26,121 @@ static uint16_t last_y = 0;
 #define TAP_MILLIS 100
 #define DRAG_DISTANCE 10
 static uint64_t touchDownMillis = 0;
+
+// Identical gamepad reports are reliable ENet packets. At 60 Hz they crowd
+// out ACKs on the Wii U's Wi-Fi and the host drops the stream. Send at once
+// when the pad actually moves, and otherwise keep a 10 Hz heartbeat.
+#define PAD_HEARTBEAT_MS 100
+#define STICK_DELTA 400
+
+typedef struct {
+  int buttonFlags;
+  unsigned char leftTrigger;
+  unsigned char rightTrigger;
+  short lx, ly, rx, ry;
+  uint64_t lastSent;
+  int valid;
+} pad_report_t;
+
+static pad_report_t pad_reports[4];
+
+static int stick_moved(short a, short b) {
+  int d = (int) a - (int) b;
+  if (d < 0) d = -d;
+  return d > STICK_DELTA;
+}
+
+static int pad_report_due(int index, int buttonFlags,
+    unsigned char leftTrigger, unsigned char rightTrigger,
+    short lx, short ly, short rx, short ry) {
+  pad_report_t* s;
+  int changed;
+
+  if (index < 0 || index >= 4)
+    return 1;
+
+  s = &pad_reports[index];
+  changed = !s->valid ||
+    s->buttonFlags != buttonFlags ||
+    s->leftTrigger != leftTrigger ||
+    s->rightTrigger != rightTrigger ||
+    stick_moved(s->lx, lx) || stick_moved(s->ly, ly) ||
+    stick_moved(s->rx, rx) || stick_moved(s->ry, ry);
+  if (!changed && millis() - s->lastSent < PAD_HEARTBEAT_MS)
+    return 0;
+
+  s->valid = 1;
+  s->buttonFlags = buttonFlags;
+  s->leftTrigger = leftTrigger;
+  s->rightTrigger = rightTrigger;
+  s->lx = lx;
+  s->ly = ly;
+  s->rx = rx;
+  s->ry = ry;
+  s->lastSent = millis();
+  return 1;
+}
+
+// Citra's default profile listens to a keyboard, not to the virtual Xbox pad
+// Sunshine creates. These are the Win32 VK codes for that profile:
+// A/B/X/Y, d-pad, L/R, ZL/ZR, Start/Select, circle pad, C-stick.
+static const short citra_keys[] = {
+  0x41, 0x53, 0x5A, 0x58,
+  0x54, 0x47, 0x46, 0x48,
+  0x51, 0x57, 0x31, 0x32,
+  0x4D, 0x4E,
+  0x25, 0x26, 0x27, 0x28,
+  0x49, 0x4A, 0x4B, 0x4C
+};
+#define CITRA_KEY_COUNT (sizeof(citra_keys) / sizeof(citra_keys[0]))
+static unsigned char citra_key_down[CITRA_KEY_COUNT];
+
+static void citra_set(int index, int down) {
+  unsigned char want = down ? 1 : 0;
+  if (index < 0 || index >= (int) CITRA_KEY_COUNT)
+    return;
+  if (citra_key_down[index] == want)
+    return;
+  citra_key_down[index] = want;
+  LiSendKeyboardEvent(citra_keys[index], want ? KEY_ACTION_DOWN : KEY_ACTION_UP, 0);
+}
+
+static void citra_release_all(void) {
+  for (int i = 0; i < (int) CITRA_KEY_COUNT; i++)
+    citra_set(i, 0);
+}
+
+static void citra_from_vpad(const VPADStatus* vpad) {
+  uint32_t b = vpad->hold;
+  float lx = vpad->leftStick.x;
+  float ly = vpad->leftStick.y;
+  float rx = vpad->rightStick.x;
+  float ry = vpad->rightStick.y;
+  const float t = 0.45f;
+
+  citra_set(0, b & VPAD_BUTTON_A);
+  citra_set(1, b & VPAD_BUTTON_B);
+  citra_set(2, b & VPAD_BUTTON_X);
+  citra_set(3, b & VPAD_BUTTON_Y);
+  citra_set(4, b & VPAD_BUTTON_UP);
+  citra_set(5, b & VPAD_BUTTON_DOWN);
+  citra_set(6, b & VPAD_BUTTON_LEFT);
+  citra_set(7, b & VPAD_BUTTON_RIGHT);
+  citra_set(8, b & VPAD_BUTTON_L);
+  citra_set(9, b & VPAD_BUTTON_R);
+  citra_set(10, b & VPAD_BUTTON_ZL);
+  citra_set(11, b & VPAD_BUTTON_ZR);
+  citra_set(12, b & VPAD_BUTTON_PLUS);
+  citra_set(13, b & VPAD_BUTTON_MINUS);
+  citra_set(14, lx < -t);
+  citra_set(15, ly > t);
+  citra_set(16, lx > t);
+  citra_set(17, ly < -t);
+  citra_set(18, ry > t);
+  citra_set(19, rx < -t);
+  citra_set(20, ry < -t);
+  citra_set(21, rx > t);
+}
 
 static int thread_running;
 static OSThread inputThread;
@@ -243,11 +359,20 @@ void wiiu_input_update(void) {
       return;
     }
 
-    LiSendMultiControllerEvent(controllerNumber++, gamepad_mask, buttonFlags,
-      (vpad.hold & VPAD_BUTTON_ZL) ? 0xFF : 0,
-      (vpad.hold & VPAD_BUTTON_ZR) ? 0xFF : 0,
-      vpad.leftStick.x * INT16_MAX, vpad.leftStick.y * INT16_MAX,
-      vpad.rightStick.x * INT16_MAX, vpad.rightStick.y * INT16_MAX);
+    {
+      unsigned char lt = (vpad.hold & VPAD_BUTTON_ZL) ? 0xFF : 0;
+      unsigned char rt = (vpad.hold & VPAD_BUTTON_ZR) ? 0xFF : 0;
+      short lx = (short) (vpad.leftStick.x * INT16_MAX);
+      short ly = (short) (vpad.leftStick.y * INT16_MAX);
+      short rx = (short) (vpad.rightStick.x * INT16_MAX);
+      short ry = (short) (vpad.rightStick.y * INT16_MAX);
+      if (pad_report_due(controllerNumber, buttonFlags, lt, rt, lx, ly, rx, ry))
+        LiSendMultiControllerEvent(controllerNumber, gamepad_mask, buttonFlags, lt, rt, lx, ly, rx, ry);
+      controllerNumber++;
+    }
+
+    if (citra_input)
+      citra_from_vpad(&vpad);
 
     VPADTouchData touch;
     VPADGetTPCalibratedPoint(VPAD_CHAN_0, &touch, &vpad.tpNormal);
@@ -297,11 +422,17 @@ void wiiu_input_update(void) {
           return;
         }
 
-        LiSendMultiControllerEvent(controllerNumber++, gamepad_mask, buttonFlags,
-          (kpad_data.pro.hold & WPAD_PRO_TRIGGER_ZL) ? 0xFF : 0,
-          (kpad_data.pro.hold & WPAD_PRO_TRIGGER_ZR) ? 0xFF : 0,
-          kpad_data.pro.leftStick.x * INT16_MAX, kpad_data.pro.leftStick.y * INT16_MAX,
-          kpad_data.pro.rightStick.x * INT16_MAX, kpad_data.pro.rightStick.y * INT16_MAX);
+        {
+          unsigned char lt = (kpad_data.pro.hold & WPAD_PRO_TRIGGER_ZL) ? 0xFF : 0;
+          unsigned char rt = (kpad_data.pro.hold & WPAD_PRO_TRIGGER_ZR) ? 0xFF : 0;
+          short lx = (short) (kpad_data.pro.leftStick.x * INT16_MAX);
+          short ly = (short) (kpad_data.pro.leftStick.y * INT16_MAX);
+          short rx = (short) (kpad_data.pro.rightStick.x * INT16_MAX);
+          short ry = (short) (kpad_data.pro.rightStick.y * INT16_MAX);
+          if (pad_report_due(controllerNumber, buttonFlags, lt, rt, lx, ly, rx, ry))
+            LiSendMultiControllerEvent(controllerNumber, gamepad_mask, buttonFlags, lt, rt, lx, ly, rx, ry);
+          controllerNumber++;
+        }
       }
       else if (kpad_data.extensionType == WPAD_EXT_CLASSIC || kpad_data.extensionType == WPAD_EXT_MPLUS_CLASSIC) {
         uint32_t btns = kpad_data.classic.hold;
@@ -342,11 +473,17 @@ void wiiu_input_update(void) {
           return;
         }
 
-        LiSendMultiControllerEvent(controllerNumber++, gamepad_mask, buttonFlags,
-          (kpad_data.classic.hold & WPAD_CLASSIC_BUTTON_ZL) ? 0xFF : 0x00,
-          (kpad_data.classic.hold & WPAD_CLASSIC_BUTTON_ZR) ? 0xFF : 0x00,
-          kpad_data.classic.leftStick.x * INT16_MAX, kpad_data.classic.leftStick.y * INT16_MAX,
-          kpad_data.classic.rightStick.x * INT16_MAX, kpad_data.classic.rightStick.y * INT16_MAX);
+        {
+          unsigned char lt = (kpad_data.classic.hold & WPAD_CLASSIC_BUTTON_ZL) ? 0xFF : 0x00;
+          unsigned char rt = (kpad_data.classic.hold & WPAD_CLASSIC_BUTTON_ZR) ? 0xFF : 0x00;
+          short lx = (short) (kpad_data.classic.leftStick.x * INT16_MAX);
+          short ly = (short) (kpad_data.classic.leftStick.y * INT16_MAX);
+          short rx = (short) (kpad_data.classic.rightStick.x * INT16_MAX);
+          short ry = (short) (kpad_data.classic.rightStick.y * INT16_MAX);
+          if (pad_report_due(controllerNumber, buttonFlags, lt, rt, lx, ly, rx, ry))
+            LiSendMultiControllerEvent(controllerNumber, gamepad_mask, buttonFlags, lt, rt, lx, ly, rx, ry);
+          controllerNumber++;
+        }
       }
     }
   }
@@ -487,4 +624,5 @@ void stop_input_thread(void)
   thread_running = 0;
   OSCancelAlarm(&inputAlarm);
   OSJoinThread(&inputThread, NULL);
+  citra_release_all();
 }

@@ -2,6 +2,43 @@
 
 Moonlight Wii U is a port of [Moonlight Embedded](https://github.com/moonlight-stream/moonlight-embedded), which is an open source client for [Sunshine](https://github.com/LizardByte/Sunshine) and NVIDIA GameStream. Moonlight allows you to stream your full collection of games and applications from your PC to other devices to play them remotely.
 
+## Jugar 3DS con Citra
+
+Esta versión recorta un solo stream de Sunshine. La pantalla superior de la 3DS va a la TV y la táctil al GamePad. No hace falta un segundo cliente ni modificar Sunshine.
+
+### En el PC
+
+1. Instala [Sunshine](https://github.com/LizardByte/Sunshine) y [Nefarius Virtual Gamepad](https://github.com/nefarius/ViGEmBus/releases/latest). Reinicia el PC después de ViGEm: sin ese driver el GamePad no llega a Citra.
+2. En Citra Nightly deja el layout **Large Screen**, proporción 4, pantalla chica abajo a la derecha y sin intercambiar pantallas. Es el valor por defecto (`layout_option=2`).
+3. Maximiza Citra en un escritorio de 1920×1080, tal como se va a capturar. Las regiones de `moonlight.conf` incluyen la barra de título y la barra de tareas. Si mueves la ventana, o si Sunshine captura solo la ventana de Citra, el recorte deja de coincidir.
+4. En los controles de Citra, asigna el mando **Xbox 360** que crea Sunshine a los botones de la 3DS y al circle pad. Moonlight ya envía ese mando. La opción `citra_input` traduce el GamePad a teclado y está desactivada: actívala solo si Citra no tiene perfil de mando, porque si no las dos entradas se suman.
+5. En Sunshine, la aplicación que se abre debe ser el escritorio (por defecto se llama `Desktop`). En `moonlight.conf` pon `app = Desktop`. El cliente pide `Steam` si no cambias esa línea, y Sunshine no trae una aplicación con ese nombre.
+
+### En la Wii U
+
+El paquete va en `sd:/wiiu/apps/moonlight/`. Tiene que incluir `moonlight.rpx` (o `moonlight.wuhb`) y `moonlight.conf`.
+
+En la configuración, descomenta `address` y pon la IP del PC. El bloque que ya viene activo es:
+
+```
+width = 1280
+height = 720
+fps = 30
+bitrate = 5000
+dualscreen = true
+tv_region = 0,0.041739,0.833984,0.933913
+drc_region = 0.833984,0.711304,1,0.933913
+mouse_mode = absolute
+```
+
+`tv_region` es la pantalla grande de la izquierda. `drc_region` es la táctil de abajo a la derecha. `mouse_mode = absolute` hace que el lápiz del GamePad pulse esa zona.
+
+Empareja Moonlight con Sunshine, acepta el PIN en el PC y entra a la sesión. Citra tiene que estar maximizado antes de conectar.
+
+### Si se corta la conexión
+
+Por Wi‑Fi, 10000 kbps llena el enlace de la Wii U. La imagen se ve bien, pero Sunshine deja de recibir los ACK y corta a los 30 segundos con `Connection terminated with error: -1`. 5000 kbps a 720p y 30 fps deja margen. Sube el bitrate solo si usas el adaptador LAN.
+
 ## Quick Start
 
 > :information_source: A Wii U LAN Adapter is recommended!
