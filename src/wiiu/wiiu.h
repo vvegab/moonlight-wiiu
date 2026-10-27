@@ -35,6 +35,31 @@ void wiiu_stream_draw(void);
 void wiiu_stream_fini(void);
 void wiiu_setup_renderstate(void);
 
+// GamePad touch reports coordinates in this plane, not the 854x480 LCD.
+#define TOUCH_WIDTH 1280
+#define TOUCH_HEIGHT 720
+
+// Normalized picture rectangle: left, top, right, bottom, each in 0..1.
+typedef struct {
+  float left;
+  float top;
+  float right;
+  float bottom;
+} screen_region_t;
+
+// dualscreen crops one decoded frame. Defaults are the top and bottom halves.
+extern int dualscreen;
+extern screen_region_t tv_region;
+extern screen_region_t drc_region;
+
+// Picture size requested from the host, and the DRC quad in touch space.
+extern int stream_width;
+extern int stream_height;
+extern float drc_touch_x;
+extern float drc_touch_y;
+extern float drc_touch_w;
+extern float drc_touch_h;
+
 #define NUM_BUFFERS 2
 #define MAX_QUEUEMESSAGES 16
 

@@ -29,6 +29,8 @@
 #include <limits.h>
 
 #ifdef __WIIU__
+#include "wiiu.h"
+
 extern int disable_gamepad;
 extern int swap_buttons;
 extern mouse_modes mouse_mode;
@@ -84,6 +86,9 @@ static struct option long_options[] = {
   {"swap_buttons", no_argument, NULL, 'B'},
   {"autostream", no_argument, NULL, 'C'},
   {"mouse_mode", required_argument, NULL, 'D'},
+  {"dualscreen", no_argument, NULL, 'E'},
+  {"tv_region", required_argument, NULL, 'F'},
+  {"drc_region", required_argument, NULL, 'G'},
 #endif
   {"nomouseemulation", no_argument, NULL, '4'},
   {"pin", required_argument, NULL, '5'},
@@ -142,6 +147,41 @@ char* get_path(char* name, char* extra_data_dirs) {
   free(data_dirs);
   free(path);
   return NULL;
+}
+#endif
+
+#ifdef __WIIU__
+static float clampf(float value, float lo, float hi) {
+  if (value < lo)
+    return lo;
+  if (value > hi)
+    return hi;
+  return value;
+}
+
+// "left,top,right,bottom" in normalized picture coordinates. No spaces:
+// the Wii U config reader stops the value at the first whitespace.
+static int parse_screen_region(const char* value, screen_region_t* region) {
+  float left, top, right, bottom;
+  if (sscanf(value, "%f,%f,%f,%f", &left, &top, &right, &bottom) != 4) {
+    fprintf(stderr, "Invalid screen region '%s' (expected left,top,right,bottom)\n", value);
+    return 0;
+  }
+
+  left = clampf(left, 0.0f, 1.0f);
+  top = clampf(top, 0.0f, 1.0f);
+  right = clampf(right, 0.0f, 1.0f);
+  bottom = clampf(bottom, 0.0f, 1.0f);
+  if (right <= left || bottom <= top) {
+    fprintf(stderr, "Screen region '%s' is empty\n", value);
+    return 0;
+  }
+
+  region->left = left;
+  region->top = top;
+  region->right = right;
+  region->bottom = bottom;
+  return 1;
 }
 #endif
 
@@ -281,6 +321,15 @@ static void parse_argument(int c, char* value, PCONFIGURATION config) {
       mouse_mode = MOUSE_MODE_ABSOLUTE;
     else if (strcasecmp(value, "touchscreen") == 0)
       mouse_mode = MOUSE_MODE_TOUCHSCREEN;
+    break;
+  case 'E':
+    dualscreen = 1;
+    break;
+  case 'F':
+    parse_screen_region(value, &tv_region);
+    break;
+  case 'G':
+    parse_screen_region(value, &drc_region);
     break;
 #endif
   case '4':

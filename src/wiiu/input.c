@@ -26,9 +26,6 @@ static uint16_t last_y = 0;
 #define DRAG_DISTANCE 10
 static uint64_t touchDownMillis = 0;
 
-#define TOUCH_WIDTH 1280
-#define TOUCH_HEIGHT 720
-
 static int thread_running;
 static OSThread inputThread;
 static OSAlarm inputAlarm;
@@ -36,9 +33,74 @@ static OSAlarm inputAlarm;
 // ~60 Hz
 #define INPUT_UPDATE_RATE OSMillisecondsToTicks(16)
 
+// Map a GamePad touch into drc_region. The content quad is letterboxed the same
+// way it is drawn. A new touch on the bars is ignored; an ongoing drag is clamped
+// so the stroke does not jump off the bottom screen.
+static int map_dual_touch(uint16_t tx, uint16_t ty, int allow_clamp, float* nx, float* ny) {
+  float x = (float) tx;
+  float y = (float) ty;
+  float left = drc_touch_x;
+  float top = drc_touch_y;
+  float right = left + drc_touch_w;
+  float bottom = top + drc_touch_h;
+  int inside = (x >= left && x <= right && y >= top && y <= bottom);
+  float u, v, rw, rh;
+
+  if (!inside && !allow_clamp)
+    return 0;
+  if (drc_touch_w <= 0.0f || drc_touch_h <= 0.0f || stream_width <= 0 || stream_height <= 0)
+    return 0;
+
+  if (x < left) x = left;
+  if (x > right) x = right;
+  if (y < top) y = top;
+  if (y > bottom) y = bottom;
+
+  u = (x - left) / drc_touch_w;
+  v = (y - top) / drc_touch_h;
+  rw = drc_region.right - drc_region.left;
+  rh = drc_region.bottom - drc_region.top;
+  *nx = drc_region.left + u * rw;
+  *ny = drc_region.top + v * rh;
+  if (*nx < 0.0f) *nx = 0.0f;
+  if (*ny < 0.0f) *ny = 0.0f;
+  if (*nx > 1.0f) *nx = 1.0f;
+  if (*ny > 1.0f) *ny = 1.0f;
+  return 1;
+}
+
+static float last_dual_x = 0.0f;
+static float last_dual_y = 0.0f;
+
+static void send_dual_mouse(float nx, float ny) {
+  short sx = (short) (nx * (float) stream_width);
+  short sy = (short) (ny * (float) stream_height);
+  if (sx < 0) sx = 0;
+  if (sy < 0) sy = 0;
+  if (sx >= stream_width) sx = (short) (stream_width - 1);
+  if (sy >= stream_height) sy = (short) (stream_height - 1);
+  LiSendMousePositionEvent(sx, sy, (short) stream_width, (short) stream_height);
+}
+
 void handleTouch(VPADTouchData touch) {
   if (mouse_mode == MOUSE_MODE_ABSOLUTE) {
-    if (touch.touched) {
+    if (dualscreen) {
+      float nx, ny;
+      if (touch.touched) {
+        if (!map_dual_touch(touch.x, touch.y, touched, &nx, &ny))
+          return;
+        send_dual_mouse(nx, ny);
+        if (!touched) {
+          LiSendMouseButtonEvent(BUTTON_ACTION_PRESS, BUTTON_LEFT);
+          touched = 1;
+        }
+      }
+      else if (touched) {
+        LiSendMouseButtonEvent(BUTTON_ACTION_RELEASE, BUTTON_LEFT);
+        touched = 0;
+      }
+    }
+    else if (touch.touched) {
       LiSendMousePositionEvent(touch.x, touch.y, TOUCH_WIDTH, TOUCH_HEIGHT);
 
       if (!touched) {
@@ -52,7 +114,26 @@ void handleTouch(VPADTouchData touch) {
     }
   }
   else if (mouse_mode == MOUSE_MODE_TOUCHSCREEN) {
-    if (touch.touched) {
+    if (dualscreen) {
+      float nx, ny;
+      if (touch.touched) {
+        if (!map_dual_touch(touch.x, touch.y, touched, &nx, &ny))
+          return;
+        last_dual_x = nx;
+        last_dual_y = ny;
+        if (!touched) {
+          LiSendTouchEvent(LI_TOUCH_EVENT_DOWN, 0, nx, ny, 0.0, 0.0, 0.0, 0.0);
+          touched = 1;
+        } else {
+          LiSendTouchEvent(LI_TOUCH_EVENT_MOVE, 0, nx, ny, 0.0, 0.0, 0.0, 0.0);
+        }
+      }
+      else if (touched) {
+        LiSendTouchEvent(LI_TOUCH_EVENT_UP, 0, last_dual_x, last_dual_y, 0.0, 0.0, 0.0, 0.0);
+        touched = 0;
+      }
+    }
+    else if (touch.touched) {
       if (!touched) {
         LiSendTouchEvent(LI_TOUCH_EVENT_DOWN, 0, (float) touch.x / TOUCH_WIDTH, (float) touch.y / TOUCH_HEIGHT, 0.0, 0.0, 0.0, 0.0);
         touched = 1;
